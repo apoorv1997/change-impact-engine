@@ -1,0 +1,15 @@
+name: Idea or new lens
+description: Support for another framework, settings library or kind of change
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What change goes unnoticed today
+      description: A real example helps most, ideally a public commit or PR.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How aftershock could catch it

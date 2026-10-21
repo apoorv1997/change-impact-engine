@@ -1,5 +1,8 @@
 # aftershock
 
+[![tests](https://github.com/apoorv1997/aftershock/actions/workflows/tests.yml/badge.svg)](https://github.com/apoorv1997/aftershock/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Find the exact lines a library, API or config change breaks in other code — verified, with `file:line`, never a risk score.**
 
 A signature diff tells you *what* changed. aftershock tells you *which lines elsewhere stop working*: in the same
@@ -18,8 +21,8 @@ what changed (griffe API diff)  ─►  who might use it (AST candidates)  ─�
 ## Install
 
 ```bash
-pip install "aftershock @ git+https://github.com/apoorv1997/change-impact-engine"            # rules only
-pip install "aftershock[model] @ git+https://github.com/apoorv1997/change-impact-engine"     # + model judgement
+pip install "aftershock @ git+https://github.com/apoorv1997/aftershock"            # rules only
+pip install "aftershock[model] @ git+https://github.com/apoorv1997/aftershock"     # + model judgement
 ```
 
 Python 3.11+. The rules-only install depends on `griffe` alone; spans the rules cannot decide are listed for review.
@@ -147,5 +150,12 @@ aftershock/budget.py           per-run and cumulative spend caps
 spike/                         benchmarks (history, PR pairs, fixes, still-broken-at-HEAD, PR sweep) and the calibration record
 tests/                         rule-level tests, no network
 ```
+
+## Contributing
+
+Contributions are welcome, and the most useful one is often a false positive turned into a test. Found a ❌ that does
+not break? Open a [False positive](https://github.com/apoorv1997/aftershock/issues/new?template=false_positive.yml) issue.
+Want to add a rule, a lens or a benchmark on a new library? Start with [CONTRIBUTING.md](CONTRIBUTING.md): setup takes a
+minute and the tests need no network.
 
 License: MIT (see [`LICENSE`](LICENSE)).

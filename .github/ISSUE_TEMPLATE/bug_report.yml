@@ -1,0 +1,22 @@
+name: Bug report
+description: A crash, wrong output, or a real break aftershock missed
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "aftershock commit, Python 3.12, macOS / Linux, with or without the model extra"

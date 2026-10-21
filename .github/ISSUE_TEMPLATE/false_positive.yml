@@ -1,0 +1,42 @@
+name: False positive
+description: aftershock flagged a line (❌) that does not actually break
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A wrong ❌ is the bug we care about most. The smaller the case, the faster it becomes a rule.
+  - type: input
+    id: finding
+    attributes:
+      label: The flagged line and finding
+      description: Copy the row from the report.
+      placeholder: "src/app/net.py:31  werkzeug.datastructures.Headers.set(_key): Parameter was removed"
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The exact command, including the library, package and refs (public repositories make this reproducible).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it does not break
+      description: For example, the name belongs to another object, the member is inherited, or the call still matches the new signature.
+    validations:
+      required: true
+  - type: textarea
+    id: code
+    attributes:
+      label: Smallest code that reproduces it (optional)
+      description: The flagged line with enough context to see what it calls or imports.
+      render: python
+  - type: input
+    id: version
+    attributes:
+      label: aftershock commit
+      description: Output of `pip show aftershock` or the commit you installed from.
