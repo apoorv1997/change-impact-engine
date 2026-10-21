@@ -1,7 +1,7 @@
 """Contract diff: what changed in a library's public API between two git refs.
 
 Deterministic. Wraps `griffe check` rather than re-implementing API diffing; griffe found 37/38 and
-43/46 real breaks on httpx 0.28 / click 8.2 in the 2026-09-27 pre-test."""
+43/46 real breaks on httpx 0.28 / click 8.2 in a pre-test."""
 from __future__ import annotations
 
 import re
@@ -63,7 +63,7 @@ def package_exports(lib_root: str, package: str, ref: str, search: str | None = 
     """Top-level re-exports of the package at `ref`: name -> defining module (from `<package>/__init__.py`).
 
     `click.Option` is `click.core.Option`, not the removed `click.parser.Option`; without this map a
-    consumer scan cannot tell them apart and neither can the model (click calibration, 2026-09-27)."""
+    consumer scan cannot tell them apart and neither can the model (click calibration)."""
     import ast
     rel = f"{search + '/' if search else ''}{package}/__init__.py"
     src = subprocess.run(["git", "-C", lib_root, "show", f"{ref}:{rel}"], capture_output=True, text=True).stdout

@@ -3,7 +3,7 @@
 setting with a default or changed one (pydantic Settings, rename-aware), followed forward for a later commit in
 the same repository that touched that key's default again, and for the chart repository's first commit naming
 the key after that date. A later "fix" naming the key is the signal that the default hurt someone.
-Usage: defaults_history.py --repo <path> --ref origin/development --since 2026-04-01 [--chart <helm repo>=<ref>]"""
+Usage: defaults_history.py --repo <path> --ref origin/main --since 2026-04-01 [--chart <helm repo>=<ref>]"""
 from __future__ import annotations
 
 import argparse, datetime, re, subprocess
@@ -15,7 +15,7 @@ def git(repo, *a):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--repo", required=True); ap.add_argument("--ref", default="origin/development")
+    ap = argparse.ArgumentParser(); ap.add_argument("--repo", required=True); ap.add_argument("--ref", default="origin/main")
     ap.add_argument("--since", default="2026-04-01"); ap.add_argument("--chart"); a = ap.parse_args()
     chart_repo, chart_ref = (a.chart.split("=", 1) if a.chart else (None, None))
     commits = git(a.repo, "log", "--first-parent", "--format=%H %ad %s", "--date=short", f"--since={a.since}", a.ref, "--",

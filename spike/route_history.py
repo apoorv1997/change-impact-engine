@@ -3,8 +3,8 @@
 routes (estate-wide: no service exposed them afterwards), the consumer at that commit's date is checked for
 lines naming those routes; each such line is then followed forward — did a later consumer commit rewrite it
 (a fix), or is it still there (a live or dead call)?
-Usage: route_history.py --lib <service repo> --ref origin/development --since 2026-04-01 --consumer <ui repo>
-       --consumer-ref origin/development --estate <repo>=<ref> ..."""
+Usage: route_history.py --lib <service repo> --ref origin/main --since 2026-04-01 --consumer <ui repo>
+       --consumer-ref origin/main --estate <repo>=<ref> ..."""
 from __future__ import annotations
 
 import argparse, datetime, pathlib, subprocess, tempfile
@@ -17,8 +17,8 @@ def git(repo, *a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--lib", required=True); ap.add_argument("--ref", default="origin/development"); ap.add_argument("--since", default="2026-04-01")
-    ap.add_argument("--consumer", required=True); ap.add_argument("--consumer-ref", default="origin/development")
+    ap.add_argument("--lib", required=True); ap.add_argument("--ref", default="origin/main"); ap.add_argument("--since", default="2026-04-01")
+    ap.add_argument("--consumer", required=True); ap.add_argument("--consumer-ref", default="origin/main")
     ap.add_argument("--estate", action="append", default=[]); ap.add_argument("--ext", default=".ts,.tsx,.js,.jsx")
     a = ap.parse_args()
     surviving_head = routes.estate_routes([tuple(e.split("=", 1)) for e in a.estate])   # mounts resolved across repositories

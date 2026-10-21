@@ -14,7 +14,7 @@ def git(repo, *a):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--repo", required=True); ap.add_argument("--ref", default="origin/development"); ap.add_argument("--since", default="2026-04-01")
+    ap = argparse.ArgumentParser(); ap.add_argument("--repo", required=True); ap.add_argument("--ref", default="origin/main"); ap.add_argument("--since", default="2026-04-01")
     a = ap.parse_args()
     commits = git(a.repo, "log", "--first-parent", "--format=%H %ad %s", "--date=short", f"--since={a.since}", a.ref, "--", "*.py").splitlines()
     print(f"{a.repo.split('/')[-1]}: {len(commits)} first-parent commits since {a.since} touch Python")

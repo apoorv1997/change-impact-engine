@@ -12,7 +12,7 @@ import json
 import re
 from dataclasses import dataclass
 
-PRICE = {  # USD per token, input / output — Claude API list prices (skill cache 2026-06-24)
+PRICE = {  # USD per token, input / output — Claude API list prices
     "claude-opus-5": (5.0 / 1e6, 25.0 / 1e6),
     "claude-sonnet-5": (2.0 / 1e6, 10.0 / 1e6),
     "claude-haiku-4-5": (1.0 / 1e6, 5.0 / 1e6),
@@ -71,7 +71,7 @@ _API = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\(")   # every `pkg.Name(
 
 def unknown_apis(text: str, package: str, names: set[str]) -> list[str]:
     """`package.Something(` mentioned in the prose where Something is not defined by the package at the
-    new ref — an invented replacement API (a local 7B model proposed `httpx.Proxies(...)`, 2026-09-29)."""
+    new ref — an invented replacement API (a local 7B model proposed `httpx.Proxies(...)`)."""
     found = {f"{m.group(1)}.{m.group(2)}" for m in _API.finditer(text) if m.group(1) == package}
     return sorted(a for a in found if a.split(".")[1] not in names)
 

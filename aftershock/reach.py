@@ -2,7 +2,7 @@
 
 A candidate is evidence that the consumer *might* be affected. Whether it actually is (the removed
 parameter of the changed API, not a same-named parameter of something else) is the verification
-layer's job — the 2026-09-27 spike showed token reach has real false positives (httpx `app=` on
+layer's job — matching by token alone has real false positives (httpx `app=` on
 transports vs clients)."""
 from __future__ import annotations
 
@@ -143,20 +143,25 @@ def _import_map(tree: ast.AST, rel: str = "") -> dict[str, str]:
     return m
 
 
-def _library_typed(tree: ast.AST, imports: dict[str, str], exports: dict[str, str], package: str) -> set[str]:
-    """Names this file binds to a library instance: `spec = FieldSpec(...)`, `x: pkg.Client`, `def f(c: Client)`."""
-    out = set()
-    def is_lib(node):
+def _library_typed(tree: ast.AST, imports: dict[str, str], exports: dict[str, str], package: str) -> dict[str, str]:
+    """Names this file binds to a library instance, with the library type when it is one type:
+    `spec = FieldSpec(...)`, `x: pkg.Client`, `def f(c: Client)`. A name bound to several types maps to ""."""
+    out: dict[str, str] = {}
+    def lib_type(node):
         d = _dotted(node) if node is not None else None
         r = resolve(d, imports, exports) if d else ""
-        return r == package or r.startswith(package + ".")
+        return r if r == package or r.startswith(package + ".") else ""
+    def bind(name, t):
+        out[name] = t if out.get(name, t) == t else ""
     for n in ast.walk(tree):
-        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call) and is_lib(n.value.func):
-            out.update(t.id for t in n.targets if isinstance(t, ast.Name))
-        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and is_lib(n.annotation):
-            out.add(n.target.id)
-        elif isinstance(n, ast.arg) and n.annotation is not None and is_lib(n.annotation):
-            out.add(n.arg)
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call) and lib_type(n.value.func):
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    bind(t.id, lib_type(n.value.func))
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and lib_type(n.annotation):
+            bind(n.target.id, lib_type(n.annotation))
+        elif isinstance(n, ast.arg) and n.annotation is not None and lib_type(n.annotation):
+            bind(n.arg, lib_type(n.annotation))
     return out
 
 
@@ -379,10 +384,17 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
         local_defs = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
         def obj_ok(ref_node, f):
+            # a member (`Headers.set`) is never reached by its bare name: `set(...)` is the builtin
+            if "." in f.object_name and f.object_name.split(".")[-1] != "__init__":
+                if isinstance(ref_node, ast.Name):
+                    return False
+                if isinstance(ref_node, ast.Attribute) and isinstance(ref_node.value, ast.Name) and ref_node.value.id == "self":
+                    return self_member_ok(ref_node, f)
             # a bare name this file defines itself (`def build_image` in the file that calls build_image) is not the
             # library's same-named object, whatever kind of change was reported (Prefect e977a2ca)
             d_ = _dotted(ref_node)
-            if d_ and "." not in d_ and "." not in f.object_name and d_ not in imports and own_module != f.module \
+            obj = f.object_name.removesuffix(".__init__")      # a constructor is called by its class's name
+            if d_ and "." not in d_ and "." not in obj and d_ not in imports and own_module != f.module \
                     and (d_ in local_assigned or d_ in local_classes or d_ in local_defs):
                 return False
             # a module-level object reached through a receiver (`admin.create_user(...)`): the receiver must
@@ -458,17 +470,29 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
                 return _dotted(node.value) or "?"
             return ""
 
+        def same_module(a: str, b: str) -> bool:
+            """`pkg.mod` and `mod` name the same module when the tree was scanned from inside the package."""
+            return a == b or a.endswith("." + b) or b.endswith("." + a)
+
+        def self_member_ok(node: ast.Attribute, f: Finding) -> bool:
+            """`self.member` is the finding's member only inside its class, or a subclass that does not define it."""
+            cls_name, member = f.object_name.split(".")[-2:]
+            cls = enclosing_class(node)
+            if cls is None:
+                return False
+            if cls.name == cls_name and same_module(own_module, f.module):
+                return True                                 # the finding's own class
+            if member in class_members(cls):
+                return False      # defines the member itself: a subclass's override, or pydantic/v1's own copy of the class
+            # a subclass, or a same-named class elsewhere that leaves the member to a subclass (werkzeug's sansio Request)
+            return cls.name == cls_name or any((_dotted(b) or "").split(".")[-1] == cls_name for b in cls.bases)
+
         def member_ok(node: ast.Attribute, f: Finding) -> bool:
             """`Class.member` finding: `self.member` counts only inside that class (or a subclass); any
             other receiver is a candidate whose type the model must judge from the evidence."""
             cls_name = f.object_name.split(".")[-2]
             if isinstance(node.value, ast.Name) and node.value.id == "self":
-                cls = enclosing_class(node)
-                if cls is None:
-                    return False
-                if cls.name != cls_name and f.object_name.split(".")[-1] in class_members(cls):
-                    return False      # a subclass that defines the member itself (huggingface_hub 3b306043 moved fields down)
-                return cls.name == cls_name or any((_dotted(b) or "").split(".")[-1] == cls_name for b in cls.bases)
+                return self_member_ok(node, f)
             # a receiver imported from outside the library is the consumer's own object, not the finding's
             # class: `settings.url` with `from app.config import settings` while the removed member lives on
             # `lib.config.Settings`. The evidence shown to the model does not include the import, so this
@@ -498,8 +522,12 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
             amb = False
             if "." in finding.object_name and recv and recv != "self" and not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 r = resolve(recv, imports, exports)
-                amb = (not (r == package or r.startswith(package + ".")) and recv.split(".")[0] not in lib_typed
-                       and finding.object_name.split(".")[-1] in own_members)
+                typed = lib_typed.get(recv, "")
+                if typed and typed.split(".")[-1] != finding.object_name.split(".")[-2]:
+                    amb = True        # an instance of another library class: `url_map = Map(...)` is not Headers
+                else:
+                    amb = (not (r == package or r.startswith(package + ".")) and recv.split(".")[0] not in lib_typed
+                           and finding.object_name.split(".")[-1] in own_members)
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 spans.append(Span(rel, node.lineno, "\n".join(lines[node.lineno - 1:end]),
                                   "\n".join(lines[max(0, node.lineno - 1 - context_lines):end]), finding, "", alias, False, True))
@@ -509,7 +537,7 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
             rt = resolve(dt, imports, exports) if dt else ""
             head_imported = bool(dt) and dt.split(".")[0] in imports          # `import httpx; httpx.Client` resolves to itself
             # the changed module itself: a reference to a removed module-level object resolves; a same-named MEMBER does not
-            # (pydantic/types.py defines many `decode`/`encode`/`__hash__` on other classes, 2026-10-01)
+            # (pydantic/types.py defines many `decode`/`encode`/`__hash__` on other classes)
             res = (bool(dt) and head_imported and (rt == package or rt.startswith(package + "."))) or (own_module == finding.module and "." not in finding.object_name)
             # a removed MEMBER (`Class.get`) reached through a non-self receiver is the class's member only when the receiver
             # IS the class: `_cv_app.get(None)` resolves into the library (a ContextVar) and is no use of SecureCookieSession.get
@@ -521,6 +549,7 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
                               "\n".join(lines[max(0, node.lineno - 1 - context_lines):end]), finding,
                               recv, alias, amb, res))
 
+        paired = set()                      # callees of calls already paired with a finding
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module is not None:
                 # `from pkg.mod import Obj` where Obj was removed from pkg.mod: this line raises first, before any
@@ -567,23 +596,28 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
                     if resolved.startswith(package + ".") and (resolved.split(".")[-1] in by_name or resolved.split(".")[-1] in by_name_rp):
                         alias, name = name, resolved.split(".")[-1]
                 if name in by_name:
-                    f = pick_by_receiver(by_name[name], receiver_of(node))
-                    if ("Positional parameter was moved" not in f.message or len(node.args) >= 1) and obj_ok(node.func, f):
-                        add(node, f, alias)
+                    # several classes can change the same member: pair the call with the first one it can reach
+                    first = pick_by_receiver(by_name[name], receiver_of(node))
+                    for f in [first] + [x for x in by_name[name] if x is not first]:
+                        if ("Positional parameter was moved" not in f.message or len(node.args) >= 1) and obj_ok(node.func, f):
+                            add(node, f, alias)
+                            paired.add(node.func)     # its callee is not paired again as an attribute
+                            break
                 if name in by_name_rp and len(node.args) >= 1:
                     # a removed parameter passed positionally: `load_spec("x", "r1")` after its second parameter
                     # was removed. The keyword path above cannot see it.
                     for f in by_name_rp[name]:
                         if obj_ok(node.func, f):
                             add(node, f, alias)
-            elif isinstance(node, ast.Attribute) and node.attr in by_name and not (
+            elif isinstance(node, ast.Attribute) and node.attr in by_name and node not in paired and not (
                     isinstance(node.ctx, ast.Store) and not isinstance(parents.get(node), ast.AugAssign)):
                 # `self.name = ...` writes the attribute (huggingface_hub ffc07b64: a class's own __init__ was matched as
                 # uses of its removed fields); `self.n += 1` reads it first and stays a use
-                f = by_name[node.attr][0]
-                is_member = "." in f.object_name and "Public object was removed" in f.message
-                if (member_ok(node, f) if is_member else obj_ok(node, f)):
-                    add(node, f)
+                for f in by_name[node.attr]:        # the first same-named finding this reference can reach
+                    is_member = "." in f.object_name and "Public object was removed" in f.message
+                    if (member_ok(node, f) if is_member else obj_ok(node, f)):
+                        add(node, f)
+                        break
             elif isinstance(node, ast.Name) and node.id in by_name and isinstance(node.ctx, ast.Load) and obj_ok(node, by_name[node.id][0]):
                 par = parents.get(node)
                 if isinstance(par, ast.Call) and _callee(par) in ("Depends", "Security") and node in par.args:
@@ -596,6 +630,6 @@ def candidates(consumer_root: str | pathlib.Path, findings: list[Finding], conte
                 fsig = [f for f in by_name[node.name] if "." in f.object_name and "Public object was removed" not in f.message]
                 if fsig:
                     # an override matters for a SIGNATURE change; a def named like a removed member is that class's own
-                    # method, not a use of the removed one (werkzeug mixins `def popitem`, 2026-10-08)
+                    # method, not a use of the removed one (werkzeug mixins `def popitem`)
                     add(node, pick_by_receiver(fsig, receiver_of(node)))
     return spans

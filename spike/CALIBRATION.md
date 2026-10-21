@@ -92,3 +92,27 @@ changed object: click 11 of 13 held up to runs, werkzeug 14 of 30, flask 4 of 18
 resolves: the CLI files import typer, which the change dropped), huggingface_hub 0 of 5, pandas 0 of 5 (partial: the
 author also deleted a line). Of the fixes that held up to runs, few match the author exactly; most are working
 alternatives (a newly private name, a kept alias the author deleted). Every rejection inspected was right.
+
+## 2026-10-21 still broken at HEAD, and the rules it taught
+
+`spike/head_scan.py` looks, at today's HEAD, for references to something an earlier commit removed or changed and that is
+still gone. The first full run over the public estate reported 272 references in werkzeug, 8 in pydantic and 1 in fastapi.
+None is a live break:
+
+| hits | cause | rule |
+|---|---|---|
+| ~245 (werkzeug) | the builtin `set(...)` matched the changed `Headers.set` | a member is never reached by its bare name |
+| 25 (werkzeug) | `url_map = Map(...)`; `url_map.add(...)` matched `Headers.add` | a receiver typed as another library class is ambiguous: a person decides |
+| 1 (werkzeug) | `Authorization` moved to another module and kept `username` | a removed member is looked up where its class lives now |
+| 7 (pydantic) | `pydantic/v1/mypy.py` keeps its own copy of the classes in `pydantic/mypy.py` | a class that defines the member itself, or a same-named class this file defines, is not the library's |
+| 1 (pydantic) | the scan dropped a first parameter named `cls` from a module-level function | `self` / `cls` is dropped only for methods |
+| 1 (werkzeug) | an example's `TemplateResponse.__call__` definition was judged as a call to `SharedDataMiddleware.__call__` | the scan judges calls only, never override definitions |
+| 1 (fastapi) | the migration guide imports `fastapi.temp_pydantic_v1_params`, removed in 0.128.0 | none: the page documents 0.119-0.127 on purpose and no test runs the example |
+
+After the rules, werkzeug and pydantic have 0 references left.
+
+Rules-only history (no model, `--since 2023-01-01 --max-commits 40`, commits both versions scored), before -> after:
+click true break lines 87 -> 88, false 0 -> 0; flask 74 -> 74, false 0 -> 0, review lines 317 -> 338 (members moved into
+the sansio base, correctly left to review); werkzeug 319 -> 337, false 3 -> 0, review lines 971 -> 926. One fix found the extra
+true breaks: when several classes change the same member, a reference is paired with the first finding it can reach (a
+subclass's own override, the sansio class's own property), not only the first finding of that name.

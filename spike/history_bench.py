@@ -8,7 +8,7 @@ did not. Outputs precision/recall per commit and pooled, plus the model's reach/
 their truth for recalibration. Takes repo paths only; the results file may contain private paths.
 
 Usage: history_bench.py <lib-repo> <package> [--search SRC] [--consumer-sub DIR] [--since DATE]
-                        [--max-commits N] [--budget-usd X] [--out results.jsonl]"""
+                        [--max-commits N] [--budget-usd X] [--out results.jsonl] [--append]"""
 from __future__ import annotations
 
 import argparse, collections, json, pathlib, re, subprocess, sys, tempfile, time
@@ -83,11 +83,12 @@ def main():
     ap.add_argument("--ref", default="HEAD", help="history to walk")
     ap.add_argument("--griffe-timeout", type=float, default=300, help="skip a commit whose API diff takes longer (seconds)")
     ap.add_argument("--workers", type=int, default=4, help="parallel griffe runs while scanning commits for API changes")
+    ap.add_argument("--append", action="store_true", help="add to --out instead of starting it afresh")
     a = ap.parse_args()
     pkg_dir = f"{a.search + '/' if a.search else ''}{a.package}"
     commits = git(a.lib, "log", "--first-parent", "--format=%H %ad %s", "--date=short", f"--since={a.since}", a.ref, "--", pkg_dir).splitlines()
     print(f"{len(commits)} first-parent commits since {a.since} touch {pkg_dir}")
-    out = open(a.out, "a"); pooled = collections.Counter(); per = []
+    out = open(a.out, "a" if a.append else "w"); pooled = collections.Counter(); per = []
     done = 0
 
     def findings_of(line):

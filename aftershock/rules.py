@@ -17,7 +17,7 @@ RULE_NOT_REACHED = Verdict(0.0, "compatible", 1.0, {}, 0)
 def still_bound(s: Span, lib_root: str, new_ref: str) -> bool:
     """False when the 'removed' name is still bound somewhere in its module at the new ref — a conditional definition
     (`if TYPE_CHECKING: X = ...` / `else: class X`) griffe saw only one branch of. Such a name may or may not be
-    importable at runtime, so it is a review item, not a verified break (pydantic IPvAnyAddress, 2026-10-01)."""
+    importable at runtime, so it is a review item, not a verified break (pydantic's IPvAnyAddress)."""
     import ast
     import subprocess
     f = s.finding
@@ -114,7 +114,7 @@ def decide(s: Span, lib_root: str, old_ref: str, new_ref: str) -> Verdict | None
         # the reference resolves through an import (or the module's own name) to exactly the removed
         # object: nothing is left for the model to judge
         if not still_bound(s, lib_root, new_ref):
-            return SKIPPED     # still exported at the new ref: a person decides; the model cannot see the new module (pydantic, 2026-10-01)
+            return SKIPPED     # still exported at the new ref: a person decides; the model cannot see the new module
         b = True
     if b == "not_reached":
         return RULE_NOT_REACHED

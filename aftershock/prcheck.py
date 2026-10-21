@@ -200,7 +200,7 @@ def run(a):
             res = (f"❌ {nreq} required key{'s' if nreq > 1 else ''} the chart never sets: `{req.group(2).strip()}`" if nreq else "✅ every required key is set") + (f"; {unread.group(1)} chart key{'s' if unread.group(1) != '1' else ''} nothing reads" if unread and unread.group(1) != "0" else "")
             checks.append((f"env keys `{app}` reads (settings + os.getenv)", f"its chart `{spec['chart']}`", res))
     # 5. settings defaults: a new env-backed setting, or a changed default, changes behaviour for every deployment
-    #    that does not set the key (a 900 s statement timeout added with a default killed a 25-minute procedure, 2026-09)
+    #    that does not set the key (a new timeout with a default cuts short every job that runs longer)
     from .config_contract import collect_helpers, settings_defaults
     helpers = collect_helpers(own_root)                         # env_prefix built by a helper function (public estates)
     renamed = {}                                                # new path -> old path when the PR moved the file

@@ -29,7 +29,7 @@ def _is_overload(fn) -> bool:
 
 def find_def(tree, object_name: str):
     """The IMPLEMENTATION of `f` / `Class.method`: `@overload` stubs are skipped — click's progressbar gained a
-    keyword-only overload ahead of its implementation and the stub was read as the signature (2026-10-07). With only
+    keyword-only overload ahead of its implementation and the stub was read as the signature. With only
     stubs (a .pyi), the last one."""
     parts = object_name.split(".")
     if len(parts) == 2:

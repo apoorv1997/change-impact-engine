@@ -907,7 +907,8 @@ def test_member_moved_to_a_base_class_is_not_a_verified_break(tmp_path):
 
 
 def test_attribute_writes_are_not_uses_but_augmented_assignments_are(tmp_path):
-    (tmp_path / "c.py").write_text("class C:\n    def __init__(self, kw):\n        self.name = kw['name']\n        self.name += '!'\n        print(self.name)\n")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "m.py").write_text("class C:\n    def __init__(self, kw):\n        self.name = kw['name']\n        self.name += '!'\n        print(self.name)\n")
     f = contracts.Finding("pkg/m.py", 1, "C.name", "Public object was removed")
     assert sorted(s.line for s in reach.candidates(tmp_path, [f])) == [4, 5]
 
@@ -923,7 +924,7 @@ def test_keyword_on_an_unrelated_callee_is_ambiguous(tmp_path):
 def test_verify_survives_a_dropped_connection(capsys):
     import pytest
     pytest.importorskip("typesafe_sdk")
-    """pandas history run, 2026-10-07: one DNS failure mid-run crashed the benchmark. Transient errors are review items."""
+    """One DNS failure mid-run used to crash a benchmark. Transient errors are review items."""
     from aftershock import verify
 
     class Flaky:
@@ -1041,6 +1042,31 @@ def test_head_scan_binds_judges_calls_against_todays_signature():
     assert hs.binds("self.finalize_request(ctx, rv, nope=1)", fn, n) is False
     assert hs.binds("self.finalize_request(ctx, rv=rv, ctx=ctx)", fn, n) is False                    # given twice
     assert hs.binds("self.finalize_request(*args)", fn, n) is None
+    # a module-level function whose first parameter is named `cls` (pydantic's model_json_schema)
+    fn2 = _ast.parse("def model_json_schema(cls, by_alias=True, mode='validation'): ...\n").body[0]
+    assert hs.binds("return model_json_schema(cls, by_alias=b, mode=m)", fn2, {"model_json_schema"}, method=False) is True
+    # werkzeug's TemplateResponse.__call__ is a definition, not a call to SharedDataMiddleware.__call__
+    assert hs.is_override("def __call__(self, environ, start_response):\n    return super().__call__(environ, start_response)")
+    assert not hs.is_override("return super().__call__(environ, start_response)")
+
+
+def test_member_is_not_reached_by_bare_name_or_a_same_named_class_elsewhere(tmp_path):
+    """werkzeug's Headers.set changed: the builtin `set(...)` is not it. pydantic/v1/mypy.py has its own copy of
+    pydantic/mypy.py's class: its `self.` calls are not the changed one."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "net.py").write_text("def f(h, xs):\n    s = set(xs)\n    h.set('a', 'b')\n")
+    (tmp_path / "pkg" / "mypy.py").write_text("class T:\n    def run(self):\n        return self.get_args(1, 2)\n")
+    (tmp_path / "pkg" / "v1").mkdir()
+    (tmp_path / "pkg" / "v1" / "mypy.py").write_text("class T:\n    def get_args(self, a, b): ...\n    def run(self):\n        return self.get_args(1, 2)\n")
+    f_set = contracts.Finding("pkg/headers.py", 1, "Headers.set(_key)", "Parameter kind was changed")
+    f_args = contracts.Finding("pkg/mypy.py", 1, "T.get_args(typed)", "Positional parameter was moved")
+    got = {(s.file, s.line) for s in reach.candidates(tmp_path, [f_set, f_args])}
+    assert ("pkg/net.py", 2) not in got and ("pkg/net.py", 3) in got
+    assert ("pkg/mypy.py", 3) in got and ("pkg/v1/mypy.py", 4) not in got
+    # the v1 copy also calls its own same-named class's constructor
+    (tmp_path / "pkg" / "v1" / "fields.py").write_text("class Field:\n    def __init__(self, a): ...\nx = Field(1)\n")
+    f_init = contracts.Finding("pkg/fields.py", 1, "Field.__init__(strict)", "Parameter was added as required")
+    assert not [s for s in reach.candidates(tmp_path, [f_init]) if s.file == "pkg/v1/fields.py"]
 
 
 def test_rules_only_install_without_the_model_extra(monkeypatch, capsys):
@@ -1050,3 +1076,64 @@ def test_rules_only_install_without_the_model_extra(monkeypatch, capsys):
     monkeypatch.setenv("TYPESAFE_API_KEY", "set-but-unusable")
     assert verify.verify([{"x": 1}]) == [verify.SKIPPED]
     assert 'pip install "aftershock[model]"' in capsys.readouterr().err
+
+
+def test_self_call_pairs_with_the_subclass_own_changed_member(tmp_path):
+    """click 4ece17a1 added `ctx` to Parameter.make_metavar and to Argument's override; `self.make_metavar()` inside
+    Argument calls the override."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "core.py").write_text(textwrap.dedent("""
+        class Parameter:
+            def make_metavar(self, ctx): ...
+        class Argument(Parameter):
+            def make_metavar(self, ctx): ...
+            def help(self):
+                return self.make_metavar()
+    """))
+    fs = [contracts.Finding("pkg/core.py", 1, "Parameter.make_metavar(ctx)", "Parameter was added as required"),
+          contracts.Finding("pkg/core.py", 1, "Argument.make_metavar(ctx)", "Parameter was added as required")]
+    got = {(s.line, s.finding.symbol) for s in reach.candidates(tmp_path, fs)}
+    assert (7, "Argument.make_metavar(ctx)") in got
+
+
+def test_receiver_typed_as_another_library_class_is_ambiguous(tmp_path):
+    """werkzeug examples: `url_map = Map(...)`; `url_map.add(...)` is Map.add, not the changed Headers.add."""
+    (tmp_path / "app.py").write_text(textwrap.dedent("""
+        from werkzeug.routing import Map
+        from werkzeug.datastructures import Headers
+        url_map = Map([])
+        h = Headers()
+        url_map.add(rule)
+        h.add("k", "v")
+    """))
+    f = contracts.Finding("src/werkzeug/datastructures/headers.py", 1, "Headers.add(_key)", "Parameter was removed")
+    amb = {s.line: s.ambiguous for s in reach.candidates(tmp_path, [f])}
+    assert amb.get(6) is True and amb.get(7) is False
+
+
+def test_head_scan_follows_a_class_whose_module_moved(tmp_path):
+    """werkzeug moved Authorization from auth_headers.py to auth.py and kept `username`: not still gone."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("head_scan", "spike/head_scan.py"); hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+    lib, a, b = _lib(tmp_path / "g", {"pkg/__init__.py": "", "pkg/auth_headers.py": "class Authorization:\n    username = None\n"},
+                     {"pkg/auth_headers.py": None, "pkg/auth.py": "class Authorization:\n    @property\n    def username(self):\n        return 1\n"})
+    f = contracts.Finding("pkg/auth_headers.py", 1, "Authorization.username", "Public object was removed")
+    assert hs.still_gone(f, lib, b) is False
+    g = contracts.Finding("pkg/auth_headers.py", 1, "Authorization.password", "Public object was removed")
+    assert hs.still_gone(g, lib, b) is True
+
+
+def test_same_named_base_class_and_subclass_reach_the_member(tmp_path):
+    """werkzeug's sansio Request reads `self.encoding_errors`, defined by wrappers' Request (a subclass of the same
+    name); a consumer's `class Request(lib.Request)` uses the library's member. Both count; a class that defines the
+    member itself is paired with its own finding."""
+    (tmp_path / "pkg" / "sansio").mkdir(parents=True)
+    (tmp_path / "pkg" / "sansio" / "request.py").write_text("class Request:\n    def init(self):\n        return self.url_charset\n")
+    (tmp_path / "app.py").write_text("from pkg import wrappers\nclass Request(wrappers.Request):\n    def f(self):\n        return self.url_charset\n")
+    (tmp_path / "pkg" / "base.py").write_text("class Request:\n    @property\n    def encoding_errors(self): ...\n    def init(self):\n        return self.encoding_errors\n")
+    fs = [contracts.Finding("pkg/wrappers.py", 1, "Request.url_charset", "Public object was removed"),
+          contracts.Finding("pkg/wrappers.py", 1, "Request.encoding_errors", "Public object was removed"),
+          contracts.Finding("pkg/base.py", 1, "Request.encoding_errors", "Public object was removed")]
+    got = {(s.file, s.line, s.finding.path) for s in reach.candidates(tmp_path, fs)}
+    assert ("pkg/sansio/request.py", 3, "pkg/wrappers.py") in got and ("app.py", 4, "pkg/wrappers.py") in got
+    assert ("pkg/base.py", 5, "pkg/base.py") in got and ("pkg/base.py", 5, "pkg/wrappers.py") not in got

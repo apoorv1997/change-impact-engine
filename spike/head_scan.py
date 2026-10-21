@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Still broken at HEAD: for every commit since a date that removed or changed a public API, look for references that
-TODAY's code (the repository at --head, plus any --consumer trees) still makes to what that commit removed. A reference
+TODAY's code (the repository at --head) still makes to what that commit removed. A reference
 counts only when the object is still gone at HEAD (not re-added, not provided by a base class, not re-exported), and
 every hit is then imported at HEAD to see whether it raises.
 
@@ -20,9 +20,10 @@ def git(repo, *a):
     return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True).stdout
 
 
-def binds(code: str, fn, names: set[str]) -> bool | None:
+def binds(code: str, fn, names: set[str], method: bool = True) -> bool | None:
     """Does the call in `code` bind to `fn`'s signature (today's)? None when it cannot be told (*args / **kwargs at the
-    call). A call written after an old commit changed the signature is judged against HEAD, never against that change."""
+    call). A call written after an old commit changed the signature is judged against HEAD, never against that change.
+    `method` is False for a module-level function, whose first parameter is passed even when it is named `cls`."""
     import ast
     node = positional.parse_stmt(code)
     call = next((n for n in ast.walk(node) if isinstance(n, ast.Call) and reach._callee(n) in names), None) if node else None
@@ -30,7 +31,7 @@ def binds(code: str, fn, names: set[str]) -> bool | None:
         return None
     a = fn.args
     pos = a.posonlyargs + a.args
-    if pos and pos[0].arg in ("self", "cls"):
+    if method and pos and pos[0].arg in ("self", "cls"):
         pos = pos[1:]
     names_pos = [x.arg for x in pos]
     n = len(call.args)
@@ -48,12 +49,27 @@ def binds(code: str, fn, names: set[str]) -> bool | None:
     return all(r in filled for r in required)
 
 
+def is_override(code: str) -> bool:
+    """Is the span a method definition (an override) rather than a call? This scan judges calls only."""
+    return code.lstrip().startswith(("def ", "async def "))
+
+
+def class_files(lib, head, cls: str) -> list[str]:
+    """Python files at `head` that define `class <cls>` at module level."""
+    out = git(lib, "grep", "-l", "-E", f"^class {cls}[(:]", head, "--", "*.py")
+    return [line.split(":", 1)[1] for line in out.splitlines()]
+
+
 def still_gone(f, lib, head) -> bool:
     """Is what the old commit removed or changed still removed or changed at HEAD?"""
     if "Public object was removed" in f.message:
         if f.object_name == "<module>":
             return subprocess.run(["git", "-C", lib, "cat-file", "-e", f"{head}:{f.path}"], capture_output=True).returncode != 0
         if "." in f.object_name:
+            if rules._show(lib, head, f.path) is None:
+                # the module itself moved: the class may live on elsewhere with the member
+                return not any(rules.inherited(contracts.Finding(p, f.line, f.symbol, f.message), lib, head)
+                               for p in class_files(lib, head, f.object_name.split(".")[-2]))
             return not rules.inherited(f, lib, head)
         src = rules._show(lib, head, f.path)
         return src is None or not contracts.binds(src, f.object_name)
@@ -103,10 +119,14 @@ def main():
             for s in spans:
                 if "Public object was removed" not in s.finding.message:
                     # a parameter change: today's call against today's signature, nothing else
+                    if s.ambiguous and s.receiver != "self":
+                        continue          # an unknown receiver the tree also defines: its type decides, so a person does
+                    if is_override(s.code):
+                        continue          # an override's signature, not a call against today's signature
                     fn = positional._def_at(a.repo, a.head, s.finding.path, s.finding.object_name)
                     parts = s.finding.object_name.split(".")
                     names = {parts[-1] if parts[-1] != "__init__" else parts[-2], s.alias} - {""}
-                    ok = binds(s.code, fn, names) if fn is not None else None
+                    ok = binds(s.code, fn, names, method=len(parts) > 1) if fn is not None else None
                     if ok is False:
                         det.append((s, rules.RULE_BREAK))
                     continue

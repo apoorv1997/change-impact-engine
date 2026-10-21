@@ -32,9 +32,10 @@ def main():
     # a nested package inside one already listed is covered by its parent
     pkgs = sorted(p for p in pkgs if not any(q != p and (f"{q[0]}/{q[1]}" if q[0] else q[1]) == p[0] for q in pkgs))
     print(f"{a.repo}: {len(pkgs)} packages -> {[f'{s}/{p}' if s else p for s, p in pkgs]}")
+    open(a.out, "w").close()                    # start afresh; each package then appends
     for search, pkg in pkgs:
         cmd = [sys.executable, str(pathlib.Path(__file__).with_name("history_bench.py")), a.repo, pkg, "--ref", a.ref,
-               "--since", a.since, "--max-commits", str(a.max_commits), "--budget-usd", str(a.budget_usd), "--out", a.out]
+               "--since", a.since, "--max-commits", str(a.max_commits), "--budget-usd", str(a.budget_usd), "--out", a.out, "--append"]
         if search:
             cmd += ["--search", search]
         if a.consumer_sub:
